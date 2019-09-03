@@ -11,6 +11,37 @@ class TMC2130:
     last_driver_registers = []
     driver_registers = []
 
+    def _get_default_registers(self):
+        default_zero_registers = [
+            0x00,
+            0x10,
+            0x11,
+            0x13,
+            0x14,
+            0x15,
+            0x2D,
+            0x33,
+            0x6C,
+            0x6D,
+            0x6E,
+            0x72,
+        ]  # a list of writeable registers that are zero at reset
+        registers = {address: 0 for address in default_zero_registers}
+
+        registers[0x60] = 0xAAAAB554  # TMC2130 datasheet page 30 & 79
+        registers[0x61] = 0x4A9554AA
+        registers[0x62] = 0x24492929
+        registers[0x63] = 0x10104222
+        registers[0x64] = 0xFBFFFFFF
+        registers[0x65] = 0xB5BB777D
+        registers[0x66] = 0x49295556
+        registers[0x67] = 0x00404222
+        registers[0x68] = 0xFFFF8056
+        registers[0x69] = 0x00F70000
+        registers[0x70] = 0x00050480  # TMC2130 datasheet page 31
+
+        return registers
+
     def __init__(self, spi_bus, spi_device, *driver_pins):
         """Initializes the driver.
 
@@ -42,33 +73,7 @@ class TMC2130:
             self.driver_pins.append(driver)
 
             # initializing registers to power on defaults
-            default_zero_registers = [
-                0x00,
-                0x10,
-                0x11,
-                0x13,
-                0x14,
-                0x15,
-                0x2D,
-                0x33,
-                0x6C,
-                0x6D,
-                0x6E,
-                0x72,
-            ]  # a list of writeable registers that are zero at reset
-            registers = {address: 0 for address in default_zero_registers}
-
-            registers[0x60] = 0xAAAAB554  # TMC2130 datasheet page 30 & 79
-            registers[0x61] = 0x4A9554AA
-            registers[0x62] = 0x24492929
-            registers[0x63] = 0x10104222
-            registers[0x64] = 0xFBFFFFFF
-            registers[0x65] = 0xB5BB777D
-            registers[0x66] = 0x49295556
-            registers[0x67] = 0x00404222
-            registers[0x68] = 0xFFFF8056
-            registers[0x69] = 0x00F70000
-            registers[0x70] = 0x00050480  # TMC2130 datasheet page 31
+            registers = self._get_default_registers()
 
             self.driver_registers.append(registers.copy())
             self.last_driver_registers.append(registers.copy())
@@ -91,18 +96,28 @@ class TMC2130:
         transmission_count = max(
             [len(transmissions) for transmissions in driver_transmissions]
         )
-        print(driver_transmissions)
 
         for i in range(transmission_count):
             current_transmission = []
             for driver in range(self.driver_count):
-                print(len(driver_transmissions[driver]), i)
-                current_transmission += (
+                current_transmission = (
                     driver_transmissions[driver][i]
                     if len(driver_transmissions[driver]) > i
                     else [0] * 5
-                )
+                ) + current_transmission
 
-            print("sent", current_transmission)
-            print(self.spi.transfer(current_transmission))
+            self.spi.transfer(current_transmission)
 
+    def reset_registers(self, driver=0):
+        """Resets registers of the specified driver to power on defaults.
+        
+        args:
+            driver: The index of the driver to reset.
+        """
+
+        if not (0 <= driver < self.driver_count):
+            raise IndexError(
+                f"Driver {driver} does not exist. There are {self.driver_count} drivers."
+            )
+
+        self.driver_registers[driver] = self._get_default_registers()
