@@ -29,7 +29,6 @@ class SPIWrapper:
         returns:
             A list of bytes recieved from the SPI device.
         """
-        print(bytes_list)
         return self.spi.xfer(bytes_list)
 
 

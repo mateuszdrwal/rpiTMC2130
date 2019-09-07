@@ -1,4 +1,13 @@
+import warnings
 from .wrappers import SPIWrapper, GPIOWrapper
+
+
+class ResetWarning(Warning):
+    pass
+
+
+class DriverError(Warning):
+    pass
 
 
 class TMC2130:
@@ -56,6 +65,26 @@ class TMC2130:
         """
         self.spi = self.spi_class(spi_bus, spi_device)
 
+        self.spi.transfer([0] * 5 * len(driver_pins))
+        response = self.spi.transfer([0] * 5 * len(driver_pins))
+        for i in range(len(driver_pins)):
+            if not response[i * 5] & 1:
+                warnings.warn(
+                    "Driver appears to have been accessed since its last power on. You should run reset_registers to make sure all settings are synced.",
+                    ResetWarning,
+                )
+
+        self.spi.transfer([0x01] * 5 * len(driver_pins))
+        self.spi.transfer([0x01] * 5 * len(driver_pins))
+        response = self.spi.transfer([0x01] * 5 * len(driver_pins))
+
+        for i in range(len(driver_pins)):
+            print(response)
+            if response[i * 5] & 1:
+                raise DriverError(
+                    f"Could not establish an SPI connection driver {i} (zero indexed)."
+                )
+
         self.driver_count = len(driver_pins)
         self.driver_gpios = []
         self.last_driver_registers = []
@@ -77,7 +106,7 @@ class TMC2130:
             self.last_driver_registers.append(registers.copy())
 
     def commit(self):
-        """Commits any settings that were changed after the last commit for all drivers, as in applies settings after they are changed."""
+        """Commits any register changes since last commit for all drivers."""
 
         driver_transmissions = [[] for _ in range(self.driver_count)]
 
