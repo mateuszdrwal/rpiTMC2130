@@ -6,11 +6,6 @@ class TMC2130:
     spi_class = SPIWrapper
     gpio_class = GPIOWrapper
 
-    driver_count = 0
-    driver_pins = []
-    last_driver_registers = []
-    driver_registers = []
-
     def _get_default_registers(self):
         default_zero_registers = [
             0x00,
@@ -62,6 +57,9 @@ class TMC2130:
         self.spi = self.spi_class(spi_bus, spi_device)
 
         self.driver_count = len(driver_pins)
+        self.driver_gpios = []
+        self.last_driver_registers = []
+        self.driver_registers = []
 
         for driver in driver_pins:
 
@@ -70,7 +68,7 @@ class TMC2130:
             if "step" not in driver:
                 raise ValueError
 
-            self.driver_pins.append(driver)
+            self.driver_gpios.append({"step": self.gpio_class(driver["step"])})
 
             # initializing registers to power on defaults
             registers = self._get_default_registers()
@@ -121,3 +119,24 @@ class TMC2130:
             )
 
         self.driver_registers[driver] = self._get_default_registers()
+
+    def step(self, steps, driver=0):
+        """Drives the motor a given amount of steps.
+
+        Note that microstepping settings affect how much one step actually is. TODO recommend the function that factors in microstepping
+
+        args:
+            steps: The number of steps to drive the motor by. If negative, drives the motor in the opposite direction.
+            driver: The index of the motors driver which should be driven.
+        """
+
+        if not (0 <= driver < self.driver_count):
+            raise IndexError(
+                f"Driver {driver} does not exist. There are {self.driver_count} drivers."
+            )
+
+        # TODO check for negative and reverse dir
+
+        pin = self.driver_gpios[driver]["step"]
+        for _ in range(steps):
+            pin.write(not pin.state)

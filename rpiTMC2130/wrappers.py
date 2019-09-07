@@ -29,6 +29,7 @@ class SPIWrapper:
         returns:
             A list of bytes recieved from the SPI device.
         """
+        print(bytes_list)
         return self.spi.xfer(bytes_list)
 
 
@@ -49,6 +50,8 @@ class GPIOWrapper:
         gpio.setmode(gpio.BOARD)
         if output:
             gpio.setup(self.pin, gpio.OUT)
+            gpio.output(self.pin, False)
+            self.state = False
         else:
             gpio.setup(self.pin, gpio.IN)
 
@@ -68,6 +71,7 @@ class GPIOWrapper:
             raise GPIOModeError("This method only works for a GPIO pin in output mode.")
 
         gpio.output(self.pin, bit)
+        self.state = bit
 
     def read(self):
         """Reads a bit from the GPIO pin.
