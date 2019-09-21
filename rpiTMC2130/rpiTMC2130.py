@@ -1,5 +1,17 @@
 import warnings
-from .wrappers import SPIWrapper, GPIOWrapper
+import spidev
+import RPi.GPIO as gpio
+import serial
+
+
+def generate_message(drivers, steps, max_speed, acceleration):
+    message = b"S"
+    for driver in range(drivers):
+        message += steps[driver].to_bytes(4, byteorder="big", signed=True)
+        message += max_speed[driver].to_bytes(2, byteorder="big")
+        message += acceleration[driver].to_bytes(2, byteorder="big")
+    message += b"E"
+    return message
 
 
 class ResetWarning(Warning):
@@ -11,10 +23,6 @@ class DriverError(Warning):
 
 
 class TMC2130:
-
-    spi_class = SPIWrapper
-    gpio_class = GPIOWrapper
-
     def _get_default_registers(self):
         default_zero_registers = [
             0x00,
@@ -52,21 +60,24 @@ class TMC2130:
         Args:
             spi_bus: The SPI bus to use.
             spi_device: The SPI device to use.
-            *driver_pins: A dictionary for each stepper driver describing its pins. Many drivers can be controlled by one single TMC2130_ class, in which case the drivers are assumed to be wired in a SPI daisy chain configuration. The dictionary is defined thusly:
+            *driver_pins: A dictionary for each stepper driver describing its pins. The amount of dictionaries defines the number of drivers to control. This number has to be exactly the same as what is programmed into the arduino, otherwise the motors won't move. Many drivers can be controlled by one single TMC2130_ class, in which case the drivers are assumed to be wired in a SPI daisy chain configuration. The dictionary is defined thusly:
                 
-                ``step``
-                    The STEP pin.
-                ``dir``
-                    The DIR pin. Optinal. If not specified, stepper direction will be controlled via SPI. This slows down operation when direction is changed often, so only use if no physical pins can be spared.
                 ``DIAG0``
                     The DIAG0 pin. Optional. TODO describe what it is used for
                 ``DIAG1``
                     The DIAG1 pin. Optional.
-        """
-        self.spi = self.spi_class(spi_bus, spi_device)
 
-        self.spi.transfer([0] * 5 * len(driver_pins))
-        response = self.spi.transfer([0] * 5 * len(driver_pins))
+        Raises:
+            DriverError: If a connection with the stepper drivers could not be established.
+            SerialException: If the serial port for communicating with the arduino could not be opened.
+        """
+        self.spi = spidev.SpiDev()
+        self.spi.open(spi_bus, spi_device)
+        self.spi.mode = 3
+        self.spi.max_speed_hz = 1000000
+
+        self.spi.xfer([0] * 5 * len(driver_pins))
+        response = self.spi.xfer([0] * 5 * len(driver_pins))
         for i in range(len(driver_pins)):
             if not response[i * 5] & 1:
                 warnings.warn(
@@ -74,16 +85,18 @@ class TMC2130:
                     ResetWarning,
                 )
 
-        self.spi.transfer([0x01] * 5 * len(driver_pins))
-        self.spi.transfer([0x01] * 5 * len(driver_pins))
-        response = self.spi.transfer([0x01] * 5 * len(driver_pins))
+        self.spi.xfer([0x01] * 5 * len(driver_pins))
+        self.spi.xfer([0x01] * 5 * len(driver_pins))
+        response = self.spi.xfer([0x01] * 5 * len(driver_pins))
 
         for i in range(len(driver_pins)):
-            print(response)
             if response[i * 5] & 1:
                 raise DriverError(
                     f"Could not establish an SPI connection driver {i} (zero indexed)."
                 )
+
+        self.sdd = serial.Serial("/dev/ttyS0", 115200)
+        self.sdd.timeout = 60
 
         self.driver_count = len(driver_pins)
         self.driver_gpios = []
@@ -94,10 +107,8 @@ class TMC2130:
 
             if type(driver) != dict:
                 raise TypeError
-            if "step" not in driver:
-                raise ValueError
 
-            self.driver_gpios.append({"step": self.gpio_class(driver["step"])})
+            self.driver_gpios.append(driver)  # TODO init gpios
 
             # initializing registers to power on defaults
             registers = self._get_default_registers()
@@ -133,7 +144,7 @@ class TMC2130:
                     else [0] * 5
                 ) + current_transmission
 
-            self.spi.transfer(current_transmission)
+            self.spi.xfer(current_transmission)
 
     def reset_registers(self, driver=0):
         """Resets registers of the specified driver to power on defaults.
@@ -149,23 +160,27 @@ class TMC2130:
 
         self.driver_registers[driver] = self._get_default_registers()
 
-    def step(self, steps, driver=0):
-        """Drives the motor a given amount of steps.
+    def _wait_for_sdd(self):
+        response = self.sdd.read(1)
+        if response != b"D":
+            raise RuntimeError(f"Got invalid response from sdd: {response}")
+
+    def step(self, steps):
+        """Drives all motors a given amount of steps.
 
         Note that microstepping settings affect how much one step actually is. TODO recommend the function that factors in microstepping
 
         args:
-            steps: The number of steps to drive the motor by. If negative, drives the motor in the opposite direction.
-            driver: The index of the motors driver which should be driven.
+            steps: An array with as many items as there are drivers with the number of steps to drive each motor by. If negative, drives the motor in the opposite direction.
         """
 
-        if not (0 <= driver < self.driver_count):
-            raise IndexError(
-                f"Driver {driver} does not exist. There are {self.driver_count} drivers."
+        if len(steps) != self.driver_count:
+            raise ValueError("Steps array length does not match number of motors.")
+
+        self.sdd.reset_input_buffer()
+        self.sdd.write(
+            generate_message(
+                self.driver_count, steps, [2000, 2000, 2000], [2000, 2000, 2000]
             )
-
-        # TODO check for negative and reverse dir
-
-        pin = self.driver_gpios[driver]["step"]
-        for _ in range(steps):
-            pin.write(not pin.state)
+        )
+        self._wait_for_sdd()
