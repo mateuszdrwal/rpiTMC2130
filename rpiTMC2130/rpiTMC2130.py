@@ -102,6 +102,8 @@ class TMC2130:
         self.driver_gpios = []
         self.last_driver_registers = []
         self.driver_registers = []
+        self.acceleration = []
+        self.max_speed = []
 
         for driver in driver_pins:
 
@@ -109,6 +111,8 @@ class TMC2130:
                 raise TypeError
 
             self.driver_gpios.append(driver)  # TODO init gpios
+            self.acceleration.append(100)
+            self.max_speed.append(100)
 
             # initializing registers to power on defaults
             registers = self._get_default_registers()
@@ -180,7 +184,7 @@ class TMC2130:
         self.sdd.reset_input_buffer()
         self.sdd.write(
             generate_message(
-                self.driver_count, steps, [2000, 2000, 2000], [2000, 2000, 2000]
+                self.driver_count, steps, self.max_speed, self.acceleration
             )
         )
         self._wait_for_sdd()
